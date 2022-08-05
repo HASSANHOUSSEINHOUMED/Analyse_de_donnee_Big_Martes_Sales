@@ -1,0 +1,542 @@
+---
+title: "Projet final ADD"
+author: "Hassan et Sarah"
+date: "21/01/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+#### [**Thème de notre Base de donnée :**]{.ul} Grandes Ventes du Marché, en anglais `Big Martes Sales`
+
+![](big-mart-franchise-1024x576.jpg){width="439"}
+
+#### [**Presentation de la Base de donnée :**]{.ul}
+
+[**Le contexte :**]{.ul}
+
+Les data scientists de Big Mart ont collecté des données de vente 2013 pour 1559 produits dans 10 magasins dans différentes villes. De plus, certains attributs de chaque produit et magasin ont été définis.
+
+Les données peuvent avoir des valeurs manquantes car certains magasins peuvent ne pas rapporter toutes les données en raison de problèmes techniques. Par conséquent, il sera nécessaire qu'on les traite en conséquence.
+
+[**Description des variables**]{.ul}
+
+-   ProductID : ID de produit unique
+
+-   Weight : poids des produits
+
+-   FatContent : précise si le produit est pauvre en matières grasses ou non
+
+-   ProductVisibility : pourcentage de la surface d'affichage totale de tous les produits d'un magasin alloué au produit particulier
+
+-   ProductType : la catégorie à laquelle appartient le produit
+
+-   MRP : Prix de vente maximum (prix affiché) des produits
+
+-   OutletID : identifiant unique du magasin
+
+-   EstablishmentYear : année de création des points de vente
+
+-   OutletSize : la taille du magasin en termes de surface au sol
+
+-   LocationType : le type de ville dans laquelle se situe le magasin
+
+-   OutletType : spécifie si le point de vente est juste une épicerie ou une sorte de supermarché
+
+-   OutletSales : ventes du produit dans le magasin particulier
+
+        Avant de commencer les graphiques avec nos données et faire des analyses statistiques, on va tout d'abord rendre notre jeu de donnée en format tidy en utilisant l'univers tidyverse.
+
+**Chargement des library et importation des données:**
+
+```{r,message=FALSE,warning=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(magrittr)
+library(wesanderson)
+library(colorspace)
+library(ggpubr)
+library(ggrepel)
+library(patchwork)
+
+
+databig <- read_csv(file = "Train-Set.csv", na = "")
+  
+print(databig, width = Inf)
+```
+
+**Structure des différentes variables**
+
+```{r}
+summary(databig)
+```
+
+Commençons par "nettoyer" le contenu de la base avant toute exploitation graphique , tout d'abord *on remarque que certaines variables sont de type chaines des caractères au lieu d'être de type facteur.*
+
+```{r}
+databig <- databig %>%
+  mutate(FatContent = as_factor(FatContent),
+         OutletSize = as_factor(OutletSize),
+         LocationType = as_factor(LocationType),
+         OutletType = as_factor(OutletType))
+```
+
+*Maintenant,on va regarder les modalités de chaque variable qui sont des facteurs.*
+
+```{r}
+databig %>%
+  select(where(is.factor)) %>%
+  summarize(across(everything(),~paste(levels(.x),collapse=",")))
+  
+```
+
+*On constate que la variable* `FatContent` *contient des répetitions au niveau des modalités car les modalités* `LF`,`low fat` et `LOW Fat` *peuvent être régroupé en une seule modalité , de plus les modalités `reg` et `Regular` peuvent être regroupé en une seule modalité.*
+
+```{r}
+rename_fatcontent <- function(chr) {
+  chr <- ifelse(chr == "LF","Low Fat",chr)
+  chr <- ifelse(chr == "low fat","Low Fat",chr)
+  chr <- ifelse(chr == "reg","Regular",chr)
+  return(chr)
+} 
+
+RENAME_FATCONTENT <- Vectorize(rename_fatcontent)
+
+databig <- databig %>% 
+  mutate(FatContent = as.character(FatContent)) %>%
+  mutate(FatContent = map_chr(FatContent,~RENAME_FATCONTENT(.x))) %>%
+  mutate(FatContent = as_factor(FatContent))
+```
+
+*Dans la variable OutletID , on remarque que tous les identifiants contiennent des mots `OUT` donc je peux les enlever de cette variable.*
+
+```{r}
+databig$OutletID <- databig$OutletID %>%
+  substring(regexpr("OUT", databig$OutletID) + 3)
+```
+
+ici, on ordonne les variables catégorielles :
+
+```{r}
+databig %>%
+  arrange(ProductID,FatContent)
+```
+
+On pourrait ordonner le % de visibilité du produit en fonction du type. On remarque que de nombreux produits de type baking goods ne sont pas visibles.
+
+```{r}
+databig %>%
+  group_by(ProductType, ProductVisibility)  %>%
+  arrange(ProductType, ProductVisibility)
+```
+
+    Maintenant que notre base de donnée est tidy , Nous pouvons alors commencer notre analyse de données.
+
+Puisqu'on se pose certaines questions sur cette base de donnée , il est temps de trouvé leurs réponses en utlisant des analyses des données.
+
+    Question 1 : Quels sont les produits qui sont pauvres en matières grasses ?
+
+```{r}
+prod_pauvres <- databig %>%
+  filter(FatContent=="Low Fat") %>%
+  select(ProductID) %>% 
+  summarise(ProductID = unique(ProductID)) %>%
+  arrange(ProductID)
+
+print(prod_pauvres)
+```
+
+    Question 2 : Quels sont les produits qui sont "Regular" en matière grasse ?
+
+```{r}
+prod_regular <- databig %>%
+  filter(FatContent=="Regular") %>%
+  select(ProductID) %>% 
+  summarise(ProductID = unique(ProductID)) %>%
+  arrange(ProductID)
+
+print(prod_regular)
+```
+
+    Question 3 : Est-ce que la majorité des produits sont pauvres ou non en matière grasse ?
+
+```{r}
+nrow(prod_pauvres)
+nrow(prod_regular)
+```
+
+Ici, on peut voir que les produits pauvres en matière grasse sont plus nombreux que les produits dits "regular" en matière grasse donc on conclut que la majorité des produits que nous étudions sont pauvres en matière grasse.
+
+    Question 4 : A quel identifiant correspond chaque type de produit ?
+
+```{r}
+databig %>%
+  select(ProductID, ProductType) %>%
+  group_by(ProductType)%>%
+  summarise(list_of_products = str_trunc(paste(unique(ProductID), collapse = ", "), width = 20))
+```
+
+    Question 5 : Pour chaque type de point de vente , combien ont des tailles petites ,moyenne ou grande en terme de surface au sol ?
+
+```{r}
+databig %>%
+  group_by(OutletType) %>%
+  nest(data = -OutletType) %>%
+  mutate(size = lapply(data, function(df){table(df$OutletSize)})) %>%
+  mutate(tidied = map(size, ~ as_tibble(.x, .name_repair = make.names))) %>%
+  unnest(tidied) %>%
+  select(OutletType, X, n) %>%
+  pivot_wider(names_from = X, values_from = n) %>%
+  relocate(Small, .before = Medium)  
+```
+
+Avec les variables MRP et Weight on cré une nouvelle variable du prix de vente maximal par unité de poids :
+
+```{r}
+
+databig %>%
+mutate(Max_Price_per_unit_weight = MRP/Weight) -> databig # mutate insert dans la table databig, la nouvelle variable Max_Price_per_unit_weight
+```
+
+Dans le graphique ci-dessous, on tente d'observer l'évolution de la médiane de Max_Price_per_unit_weigh selon l'année d'établissement et ces pour chaque type de produit :
+
+```{r,warning=FALSE,message=FALSE}
+databig %>% 
+  group_by(ProductType, EstablishmentYear) %>% # Regroupement de ProductType avec EstablishmentYear
+  summarize(median_Max_Price_per_unit_weight = median(Max_Price_per_unit_weight)) %>% 
+  ungroup() %>%
+  ggplot() +
+  geom_line(aes(x = EstablishmentYear, y = median_Max_Price_per_unit_weight, color = ProductType))
+```
+
+Dans le graphique ci-dessous, on s'intéresse aux fonctions de répartion de la visibilité des produits pour chaque année d'un établissement.
+
+```{r}
+databig %>%
+  ggplot(aes(x = ProductVisibility, color = as.factor(EstablishmentYear))) +
+   stat_ecdf(geom = "step")
+```
+
+Dans le graphique ci-dessous, on tente d'observer Max_Price_per_unit_weight selon les différents types de produits.
+
+```{r}
+temp = data.frame(databig$ProductType, databig$Max_Price_per_unit_weight, databig$OutletType, databig$OutletSales)
+temp %$% plot(as.factor(databig.ProductType), databig.Max_Price_per_unit_weight,xlab="ProductType", ylab="Max_Price_per_unit_weight", main="Prix maximal par unité de poids selon les différents types de produits") 
+```
+
+On observe de nombreux outliers pour au moins 12 produits. De même nous observons des outliers ainsi que les médianes, minimum et maximum des prix de ventes par type de point de vente.
+
+```{r}
+
+temp %$% plot(fct_reorder(as.factor(databig.OutletType), databig.OutletSales, median), xlab="OutletType", ylab="OutletSales", main="Vente annuelle selon le type de supermarché ")
+
+temp %$% plot(as.factor(databig.OutletType), databig.OutletSales, xlab="OutletType", ylab="OutletSales", main="Vente annuelle selon le type de supermarché ") # boxplot amélioré
+```
+
+Intéressons-nous à l'aspect statistique de nos variables, ici dans le graphique ci-dessous on a représenté la fonction de répartition des ventes annuelles de chaque type de magasins ainsi qu'une fonction de densité du prix de vente maximum (prix affiché) des produits selon sa classe calorifique:
+
+```{r}
+
+plot1 <- databig %>% 
+  ggplot(aes(x = OutletSales, color = OutletType)) +
+  stat_ecdf(geom = "step") # ecdf pour la fonction de répartition
+
+plot2 <- databig %>% 
+  ggplot(aes(x = MRP, color= FatContent)) +
+  stat_density(geom= "density")
+
+grid.arrange(plot1, plot2,ncol=2)
+```
+
+Ici , on extrait les valeurs minimal et maximal de 4 variables quantitatives :
+
+```{r}
+
+a= databig %>%
+  select(Weight, MRP, OutletSales, Max_Price_per_unit_weight) %>%
+  apply(MARGIN = 2, range, na.rm = TRUE) %>%
+  t()
+
+  colnames(a )= c("Min","Max")
+a
+```
+
+```{r}
+b = table(databig$OutletType)
+a = prop.table(table(as.factor(databig$OutletType)))*100
+databig %>%
+ggplot() +
+  geom_bar(aes(x=OutletType),fill="darkblue",width=.5)+
+  annotate(geom = "text", x= 1:4, y = b+200, label = paste(a,"%"), col = 2)
+```
+
+D'après le graphique ci-dessus, on voit que le point de vente du supermarket Type 1 represente 65% tandis que celles du suparmarket Type 2 ou 3 represente 11%. Cela nous permet de conclure que la majorité des points des ventes sont de Supermarket du Type 1.
+
+```{r}
+databig %>%
+  ggplot() +
+  geom_bar(aes(x=OutletSize,fill=OutletSize),fill=c('green','yellow','orange','blue'))
+  
+```
+
+D'après le graphique ci-dessus , on constate que dans notre base de donnée , la majorité des magasins sont des magasins de surface moyenne.
+
+```{r}
+databig %>%
+ggplot() +
+  geom_bar(aes(x=LocationType),fill="darkgreen",width=.5)+
+  coord_polar()
+```
+
+-   Dans le graphique ci-dessus , on voit que la majorité se situent dans la ville de type 3 puis de manière decroissante dans la ville de type 2 puis 1.
+
+```{r,warning=FALSE}
+databig %>%
+  ggplot() +
+  geom_line(aes(x=MRP,y= Weight, color = ProductType), show.legend = FALSE) +
+  facet_grid(ProductType ~ .) +
+  theme(axis.text.y = element_blank(),
+        strip.text.y = element_text(angle = 0))
+```
+
+D'après le graphique ci-dessus, on observe le poids des produits en fonction du prix de vente maximum (prix affiché) dont la couleur est associée à la catégorie à laquelle appartient le produit.
+
+```{r}
+databig %>%
+  ggplot() +
+  geom_point(aes(x=ProductVisibility,y=MRP,color=ProductType),size=3,alpha=0.9)
+```
+
+Le graphique ci-dessus nous montre le prix de vente maximum des produits en fonction du pourcentage de la surface d'affichage allouée à chaque produit , par magasin.
+
+```{r,warning=FALSE}
+databig %>%
+  ggplot() +
+geom_col(aes(x=FatContent,y=Weight),col="red")
+```
+
+Dans le diagramme en barre ci-dessus, on voit que les produits pauvres en matières grasses sont plus lourd que les produits "regular" en matière grasse.
+
+```{r}
+databig %>%
+  ggplot +
+  geom_bar(aes(x=EstablishmentYear,fill=MRP),color=45)
+```
+
+D'après le diagramme en barre ci-dessus , on voit que les points des ventes créés avant 1987 sont beaucoup plus chers.
+
+```{r,warning=FALSE}
+databig %>%
+  ggplot() +
+  geom_point(aes(x=ProductVisibility,y=OutletSales,color=OutletSize)) +
+  scale_color_brewer("Taille du magasin",palette="Set1")
+
+```
+
+Le graphique ci-dessus nous indique les ventes du produit dans le magasin en fonction du pourcentage de la surface d'affichage allouée à chaque produit , par magasin , en fonction de la taille du magasin.
+
+On va utilisé les mêmes variables pour le graphique ci-dessous mais cette fois-ci nous allons modifié manuellement la palette de couleur avec `scale_color_manual` et son argument `values`
+
+```{r}
+databig %>%
+ggplot() +
+  geom_point(aes(x=ProductVisibility,y=OutletSales,color=OutletSize)) +
+  scale_color_manual(
+    "Taille du magasin",
+    values = c("green3", "#FFDD45", rgb(0.1,0.2,0.6))
+  )
+```
+
+```{r}
+databig %>%
+ggplot() +
+  geom_point(aes(x=ProductVisibility,y=OutletSales,color=Weight)) +
+  scale_color_viridis_c("Poids du produit",option = "plasma")
+```
+
+Le graphique ci-dessus nous indique les ventes du produit dans le magasin en fonction du pourcentage de la surface d'affichage allouée à chaque produit , par magasin , en fonction du poids du magasin.
+
+On va utilisé les mêmes variables pour le graphique ci-dessous mais cette fois ci on va utilisé `scale_color_distiller`
+
+```{r}
+
+databig %>%
+ggplot() +
+  geom_point(aes(x=ProductVisibility,y=OutletSales,color=Weight)) +
+  scale_color_distiller("Poids du produit", palette = "Spectral")
+```
+
+```{r,message=FALSE}
+databig %>%
+ggplot() + 
+  geom_histogram(aes(x = OutletSales)) +
+ theme(panel.grid.major = element_line(colour = "dodgerblue",
+    size = 0.5, linetype = "dotdash"), axis.title = element_text(family = "serif",
+    size = 18, face = "italic", colour = "white"),
+    axis.text = element_text(family = "serif",
+        size = 15, face = "bold"), axis.text.x = element_text(family = "mono"),
+    plot.title = element_text(family = "serif"),
+    legend.text = element_text(family = "serif"),
+    legend.title = element_text(family = "serif"),
+    panel.background = element_rect(fill = "coral"),
+    plot.background = element_rect(fill = "blueviolet"))
+
+  
+```
+
+D'après ce graphique ci-dessus, on peut voire que la variable `OutletSales` qui designe les ventes du produit dans le magasin particulier ne suit pas une loi normale.
+
+```{r}
+databig %>%
+ggplot() +
+  aes(x = ProductType) +
+  geom_bar(position = "dodge", fill = "violet") +
+  labs(title = "La catégorie à laquelle appartient le produit") +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "italic",
+    hjust = 0.5)
+  )
+
+```
+
+Dans ce graphique ci-dessus, on voit que la majorité des produits appartient aux catégories `Fruits and Vegetables` et `Snack Foods` dans notre base de données.
+
+```{r,warning=FALSE}
+
+databig %>%
+ggplot() +
+  aes(
+    x = Weight,
+    y = MRP,
+    fill = ProductVisibility,
+    colour = LocationType,
+    group = ProductType
+  ) +
+  geom_point(shape = "triangle", size = 1.5) +
+  scale_fill_gradient() +
+  scale_color_hue(direction = 1) +
+  theme_minimal() +
+  facet_wrap(vars(OutletSize))
+```
+
+On voit d'après le graphique ci-dessus que le poids du produits n'est pas proportionnel au prix de vente maximum des produits. Et on constate que dans la ville de type 3 , on ne trouve que des grands magasins et que les magasins moyens et petits se trouvent dans les villes de type 1 et 2.
+
+Par contre , on peut trouvé des magasins moyens dans la ville de type 3 mais pas des petits.
+
+```{r,warning=FALSE}
+
+databig %>%
+ggplot() +
+  aes(
+    x = Weight,
+    y = MRP,
+    fill = FatContent,
+    colour = LocationType,
+    group = LocationType
+  ) +
+  geom_point(shape = "bullet", size = 1.75) +
+  scale_fill_hue(direction = 1) +
+  scale_color_hue(direction = 1) +
+  theme_linedraw() +
+  facet_wrap(
+    vars(OutletType),
+    scales = "free_x",
+    ncol = 2L,
+    nrow = 2L
+  )
+```
+
+On peut remarquer dans le graphique ci-dessus que le supermarket de Type 1 se trouve dans toutes les villes tandis que le supermarket de type 2 et et les épiceries se trouvent simplement dans les villes de type 3.
+
+```{r}
+
+databig %>%
+ggplot() +
+  aes(x = MRP, y = OutletSales, colour = FatContent) +
+  geom_point(shape = "plus", size = 1.5) +
+  scale_color_viridis_d(option = "plasma", direction = 1) +
+  theme_dark() +
+  facet_wrap(vars(OutletSize))
+```
+
+Les graphes ci-dessus nous montre que les ventes des produits dans tous les magasins peuvent être proportionnel au prix de vente maximum (prix affiché).
+
+Du coup, on peut remarqué que si les ventes des produits augmentent alors il est possible d'augmenté le prix de vente maximum (prix affiché) des produits pour élargir les bénéfices et cela concerne des produits faible ou normale en matière grasse.
+
+```{r,warning=FALSE}
+databig %>%
+  ggplot(aes(y=OutletSales,x=OutletType,fill=OutletType))+
+  geom_jitter(width=0.25,height=0)+
+  geom_boxplot(alpha=0.25)+
+  scale_fill_manual(values=c("yellow","green3","blue","red"))+
+  theme(axis.text.x = element_text(size=rel(0.8)))
+```
+
+D'après ce graphique ci-dessus, on voit que la variable `OutletType` contient des valeurs abbérentes ou comme on aime l'appeller des valeurs anormales ou extrêmes.
+
+```{r}
+
+Weight <- databig$Weight[1:30]
+MRP <- databig$MRP[1:30]
+LocationType <- databig$LocationType[1:30]
+
+df <- data.frame(Weight,MRP,LocationType)
+
+df %>%
+  ggdotchart(x="Weight",
+             y="MRP",
+             color="LocationType",
+             palette=c("#00AFBB","#E7B800","#FC4E07"),
+             sorting="descending",
+             add="segments",
+             add.params=list(color="lightgray",size=1),
+             group="LocationType",
+             dot.size=4) +
+  geom_hline(yintercept=0,linetype=2,color="lightgray")
+```
+
+Le graphique ci-dessus nous montre les prix de vente maximum (prix affiché) des produits en fonction du poids des produits pour chaque type de ville dans laquelle se situe le magasin.
+
+On va representé les mêmes variables dans le graphique ci-dessous en faisant une rotation sur le graphique précédente.
+
+```{r}
+df %>%
+  ggdotchart(x="Weight",
+             y="MRP",
+             color="LocationType",
+             palette=c("#00AFBB","#E7B800","#FC4E07"),
+             sorting="descending",
+             add="segments",
+             add.params=list(color="lightgray",size=1),
+             group="LocationType",
+             dot.size=4,
+             rotate=TRUE) +
+  geom_hline(yintercept=0,linetype=2,color="lightgray")
+```
+
+```{r,warning=FALSE}
+databig %>%
+ggscatter(x="ProductVisibility",y="MRP",color="LocationType",palette="plasma",shape="LocationType",label="OutletSize",repel=TRUE)
+```
+
+Dans le graphique ci-dessus , on voit les prix de vente maximum (prix affiché) des produits en fonction de pourcentage de la surface d'affichage alloué au produit particulier, de tous les produits d'un magasin, selon le type de localisation.
+
+```{r,warning=FALSE}
+databig %>%
+ggscatter(x="ProductVisibility",y="MRP",color="LocationType",palette="jco",shape="LocationType",label="OutletSize",repel=TRUE,
+          label.select=dplyr::filter(databig,ProductVisibility>0.05 | MRP>143) %>% .$OutletSize)
+```
+
+Le graphique ci-dessus est le même que celui précédent sauf qu'ici on s'interesse au pourcentage de la surface d'affichage totale de tous les produits d'un magasin alloué au produit particulier qui est superieur à 5% et tous les prix de vente maximum (prix affiché) des produits qui sont supérieur à 143.
+
+```{r,message=FALSE}
+databig %>%
+ggscatter(x="ProductVisibility",y="MRP",color="LocationType",palette="plasma",shape="LocationType",add="reg.line",conf.int=TRUE)+
+  geom_smooth(method="gam")
+```
+
+Dans le graphique ci-dessus, On voit que les deux variables ne sont pas proportionnelles.
